@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Eye - Motion Tracking</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #07072a;
+    overflow: hidden;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  #camStatus {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 3%;
+    text-align: center;
+    font: 14px system-ui, sans-serif;
+    color: #1a2a56;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-shadow: 0 1px 10px rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+    z-index: 50;
+  }
+
+  /* Picture-in-Picture Camera Box */
+  .pip-box {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: 280px;
+    background: rgba(10, 15, 36, 0.85);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(80, 160, 255, 0.35);
+    border-radius: 12px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 20px rgba(30, 120, 255, 0.2);
+    overflow: hidden;
+    z-index: 100;
+    user-select: none;
+    transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.25s ease;
+  }
+
+  .pip-box.minimized .pip-body {
+    display: none;
+  }
+
+  .pip-box.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(20px) scale(0.95);
+  }
+
+  .pip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(18, 26, 56, 0.7);
+    border-bottom: 1px solid rgba(80, 160, 255, 0.2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: #9bc2ff;
+    text-transform: uppercase;
+  }
+
+  .pip-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00ffaa;
+    box-shadow: 0 0 8px #00ffaa;
+    animation: pulse 1.8s infinite;
+  }
+
+  @keyframes pulse {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 170, 0.7); }
+    70% { transform: scale(1.15); box-shadow: 0 0 0 6px rgba(0, 255, 170, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 170, 0); }
+  }
+
+  .pip-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pip-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    color: #b7d5ff;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .pip-btn:hover {
+    background: rgba(80, 160, 255, 0.3);
+    color: #fff;
+  }
+
+  .pip-body {
+    position: relative;
+    width: 100%;
+    height: 210px;
+    background: #030612;
+    overflow: hidden;
+  }
+
+  #camStream {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* Sci-fi corner brackets */
+  .bracket {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-color: rgba(80, 180, 255, 0.7);
+    border-style: solid;
+    pointer-events: none;
+  }
+  .bracket-tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+  .bracket-tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  .bracket-bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+  .bracket-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+  /* Camera HUD Overlay */
+  .pip-hud {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 6px 10px;
+    background: linear-gradient(180deg, transparent 0%, rgba(5, 10, 25, 0.85) 100%);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: "Courier New", monospace;
+    font-size: 10px;
+    color: #92bfff;
+    pointer-events: none;
+  }
+
+  /* Fallback overlay when stream is offline */
+  .cam-fallback {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    text-align: center;
+    background: rgba(6, 10, 25, 0.95);
+    color: #8da4d0;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .cam-fallback.active {
+    display: flex;
+  }
+
+  .cam-fallback-icon {
+    font-size: 26px;
+    margin-bottom: 8px;
+    opacity: 0.8;
+  }
+
+  /* Floating restore pill when closed */
+  .cam-restore-pill {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    background: rgba(12, 18, 42, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(80, 160, 255, 0.4);
+    color: #c2dcff;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    transition: all 0.2s ease;
+  }
+
+  /* Gesture Math Calculator & Quiz Panel */
+  .math-panel {
+    position: fixed;
+    top: 24px;
+    left: 24px;
+    width: 330px;
+    background: rgba(14, 22, 54, 0.88);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(80, 170, 255, 0.45);
+    border-radius: 14px;
+    box-shadow: 0 12px 36px rgba(10, 15, 35, 0.6), 0 0 20px rgba(40, 140, 255, 0.2);
+    overflow: hidden;
+    z-index: 100;
+    user-select: none;
+    transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.25s ease;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  .math-panel.minimized .math-view {
+    display: none;
+  }
+
+  .math-panel.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-20px) scale(0.95);
+  }
+
+  .math-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(20, 32, 72, 0.75);
+    border-bottom: 1px solid rgba(80, 170, 255, 0.25);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #92c4ff;
+    text-transform: uppercase;
+  }
+
+  .math-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .math-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .math-mode-pill {
+    background: rgba(45, 120, 255, 0.25);
+    border: 1px solid rgba(100, 180, 255, 0.5);
+    color: #bce0ff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .math-mode-pill:hover {
+    background: rgba(45, 120, 255, 0.45);
+    color: #fff;
+  }
+
+  .math-view {
+    padding: 14px 16px;
+    color: #e4efff;
+  }
+
+  .math-formula-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(8, 14, 38, 0.8);
+    border: 1px solid rgba(60, 140, 255, 0.3);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+
+  .hand-operand {
+    text-align: center;
+    flex: 1;
+  }
+
+  .hand-sub {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: #79aeff;
+    margin-bottom: 3px;
+  }
+
+  .hand-val {
+    font-size: 26px;
+    font-weight: 800;
+    font-family: "Courier New", monospace;
+    color: #ffffff;
+    line-height: 1.1;
+    text-shadow: 0 0 10px rgba(100, 200, 255, 0.6);
+  }
+
+  .hand-gesture {
+    font-size: 9px;
+    color: #5ce6ff;
+    margin-top: 2px;
+  }
+
+  .operator-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0 6px;
+  }
+
+  .op-btn {
+    width: 22px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(80, 160, 255, 0.3);
+    color: #92c4ff;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+
+  .op-btn:hover, .op-btn.active {
+    background: #1f6fff;
+    border-color: #64eaff;
+    color: #fff;
+    box-shadow: 0 0 8px rgba(100, 230, 255, 0.6);
+  }
+
+  .equals-sign {
+    font-size: 20px;
+    font-weight: 700;
+    color: #5ce6ff;
+    margin: 0 6px;
+  }
+
+  .math-result-box {
+    text-align: center;
+    flex: 1;
+    background: rgba(20, 45, 110, 0.4);
+    border: 1px solid rgba(80, 180, 255, 0.5);
+    border-radius: 8px;
+    padding: 4px 6px;
+  }
+
+  .result-sub {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: #64eaff;
+  }
+
+  .result-val {
+    font-size: 28px;
+    font-weight: 900;
+    font-family: "Courier New", monospace;
+    color: #64eaff;
+    line-height: 1.1;
+    text-shadow: 0 0 12px rgba(100, 235, 255, 0.8);
+  }
+
+  .math-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 11px;
+    color: #b0d0ff;
+  }
+
+  .grid-item {
+    background: rgba(12, 20, 50, 0.6);
+    border: 1px solid rgba(60, 120, 220, 0.25);
+    border-radius: 6px;
+    padding: 6px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .grid-item strong {
+    color: #ffffff;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+  }
+
+  /* Quiz View */
+  .quiz-box {
+    text-align: center;
+    background: rgba(8, 14, 38, 0.85);
+    border: 1px solid rgba(80, 170, 255, 0.35);
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  .quiz-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #64eaff;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .quiz-q {
+    font-size: 28px;
+    font-weight: 800;
+    font-family: "Courier New", monospace;
+    color: #ffffff;
+    margin-bottom: 6px;
+    text-shadow: 0 0 12px rgba(80, 180, 255, 0.6);
+  }
+
+  .quiz-prompt {
+    font-size: 11px;
+    color: #a0c6ff;
+    margin-bottom: 10px;
+  }
+
+  .quiz-stats {
+    display: flex;
+    justify-content: space-around;
+    font-size: 11px;
+    font-weight: 600;
+    color: #92bfff;
+    padding-top: 8px;
+    border-top: 1px solid rgba(80, 160, 255, 0.2);
+  }
+
+  .quiz-feedback {
+    margin-top: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffd000;
+  }
+
+  /* Voice Recognition Section */
+  .voice-section {
+    background: rgba(10, 16, 42, 0.75);
+    border: 1px solid rgba(80, 170, 255, 0.3);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+
+  .voice-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .voice-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 255, 170, 0.15);
+    border: 1px solid rgba(0, 255, 170, 0.45);
+    color: #64ffda;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .voice-toggle-btn.muted {
+    background: rgba(255, 80, 80, 0.15);
+    border-color: rgba(255, 80, 80, 0.45);
+    color: #ff8585;
+  }
+
+  .voice-tts-btn {
+    background: rgba(45, 120, 255, 0.2);
+    border: 1px solid rgba(100, 180, 255, 0.4);
+    color: #bce0ff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .voice-tts-btn.off {
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #8fa0c0;
+  }
+
+  .voice-wave {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 14px;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+  }
+
+  .voice-wave.active {
+    opacity: 1;
+  }
+
+  .voice-bar {
+    width: 2.5px;
+    background: #00ffaa;
+    border-radius: 2px;
+    height: 6px;
+  }
+
+  .voice-wave.active .voice-bar {
+    animation: vwave 0.7s ease-in-out infinite alternate;
+  }
+
+  .voice-wave.active .voice-bar:nth-child(1) { height: 5px; animation-delay: 0.1s; }
+  .voice-wave.active .voice-bar:nth-child(2) { height: 12px; animation-delay: 0.25s; }
+  .voice-wave.active .voice-bar:nth-child(3) { height: 8px; animation-delay: 0.15s; }
+  .voice-wave.active .voice-bar:nth-child(4) { height: 14px; animation-delay: 0.3s; }
+  .voice-wave.active .voice-bar:nth-child(5) { height: 6px; animation-delay: 0.05s; }
+
+  @keyframes vwave {
+    0% { transform: scaleY(0.4); }
+    100% { transform: scaleY(1.3); }
+  }
+
+  .voice-transcript-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11px;
+    background: rgba(6, 10, 26, 0.7);
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin-bottom: 5px;
+  }
+
+  .voice-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #5ce6ff;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  .voice-transcript {
+    font-family: "Courier New", monospace;
+    color: #ffffff;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .voice-step-status {
+    font-size: 10px;
+    font-weight: 600;
+    color: #ffd000;
+    padding-left: 2px;
+  }
+
+  /* Math Restore Floating Pill */
+  .math-restore-pill {
+    position: fixed;
+    top: 24px;
+    left: 24px;
+    background: rgba(14, 22, 54, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(80, 170, 255, 0.45);
+    color: #c2dcff;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    transition: all 0.2s ease;
+  }
+
+  .math-restore-pill:hover {
+    background: rgba(24, 38, 85, 0.95);
+    border-color: rgba(120, 190, 255, 0.7);
+    transform: translateY(2px);
+  }
+
+  .math-restore-pill.visible {
+    display: flex;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="camStatus"></div>
+
+<!-- Gesture & Voice Math Calculator & Quiz Panel -->
+<div id="mathPanel" class="math-panel">
+  <div class="math-header">
+    <div class="math-title">
+      <span>🧮 GESTURE & VOICE MATH</span>
+      <span id="mathStatusDot" class="pulse-dot" style="width:6px; height:6px;"></span>
+    </div>
+    <div class="math-header-actions">
+      <button id="mathModeBtn" class="math-mode-pill" title="Toggle Calculator / Quiz Challenge">🎮 Quiz Mode</button>
+      <button id="mathMinBtn" class="pip-btn" title="Minimize / Expand">−</button>
+      <button id="mathCloseBtn" class="pip-btn" title="Hide (Press 'M')">×</button>
+    </div>
+  </div>
+
+  <!-- Calculator Mode View -->
+  <div id="calcView" class="math-view">
+    <!-- Voice Detection Bar -->
+    <div class="voice-section">
+      <div class="voice-header-row">
+        <button id="voiceToggleBtn" class="voice-toggle-btn" title="Toggle Microphone Listening (Shortcut: V)">
+          <span id="voiceDot" class="pulse-dot" style="background:#00ffaa; width:6px; height:6px;"></span>
+          <span id="voiceBtnLabel">🎙️ Voice: ACTIVE</span>
+        </button>
+        <div id="voiceWave" class="voice-wave active">
+          <div class="voice-bar"></div>
+          <div class="voice-bar"></div>
+          <div class="voice-bar"></div>
+          <div class="voice-bar"></div>
+          <div class="voice-bar"></div>
+        </div>
+        <button id="voiceTtsBtn" class="voice-tts-btn" title="Toggle Speech Audio Output">🔊 Speech: ON</button>
+      </div>
+      <div class="voice-transcript-row">
+        <div class="voice-label">VOICE DETECTED:</div>
+        <div id="voiceTranscript" class="voice-transcript">Speak a number (e.g. "5 plus 3" or "four")...</div>
+      </div>
+      <div id="voiceStepStatus" class="voice-step-status">Listening... speak any number to start count</div>
+    </div>
+
+    <div class="math-formula-box">
+      <div class="hand-operand">
+        <div class="hand-sub">OPERAND A</div>
+        <div id="leftHandVal" class="hand-val">0</div>
+        <div id="leftHandGest" class="hand-gesture">NONE</div>
+      </div>
+
+      <div class="operator-selector">
+        <button class="op-btn active" data-op="+">+</button>
+        <button class="op-btn" data-op="−">−</button>
+        <button class="op-btn" data-op="×">×</button>
+        <button class="op-btn" data-op="÷">÷</button>
+      </div>
+
+      <div class="hand-operand">
+        <div class="hand-sub">OPERAND B</div>
+        <div id="rightHandVal" class="hand-val">0</div>
+        <div id="rightHandGest" class="hand-gesture">NONE</div>
+      </div>
+
+      <div class="equals-sign">=</div>
+
+      <div class="math-result-box">
+        <div class="result-sub">RESULT</div>
+        <div id="mathPrimaryResult" class="result-val">0</div>
+      </div>
+    </div>
+
+    <!-- Live 4-operation breakdown -->
+    <div class="math-grid">
+      <div class="grid-item"><span>+ Sum:</span> <strong id="gridAdd">0</strong></div>
+      <div class="grid-item"><span>− Diff:</span> <strong id="gridSub">0</strong></div>
+      <div class="grid-item"><span>× Prod:</span> <strong id="gridMul">0</strong></div>
+      <div class="grid-item"><span>÷ Quot:</span> <strong id="gridDiv">0.0</strong></div>
+    </div>
+  </div>
+
+  <!-- Quiz Mode View -->
+  <div id="quizView" class="math-view" style="display:none;">
+    <div class="quiz-box">
+      <div class="quiz-badge">SOLVE WITH HAND OR VOICE!</div>
+      <div id="quizQ" class="quiz-q">2 + 3 = ?</div>
+      <div class="quiz-prompt">Hold up fingers OR say the answer (e.g. "five")</div>
+      <div class="quiz-stats">
+        <div>Score: <strong id="quizScore">0</strong></div>
+        <div>Streak: <strong id="quizStreak">🔥 0</strong></div>
+      </div>
+      <div id="quizFeedback" class="quiz-feedback">Watching & Listening...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating Pill button to restore math panel when hidden -->
+<button id="mathRestorePill" class="math-restore-pill" title="Press 'M' on keyboard to toggle">
+  <span>🧮 Gesture Math (M)</span>
+</button>
+
+<!-- Small screen preview box for camera output -->
+<div id="pipBox" class="pip-box">
+  <div class="pip-header">
+    <div class="pip-title">
+      <span id="pulseDot" class="pulse-dot"></span>
+      <span>CAM STREAM</span>
+    </div>
+    <div class="pip-controls">
+      <button id="pipMinBtn" class="pip-btn" title="Minimize / Expand">−</button>
+      <button id="pipCloseBtn" class="pip-btn" title="Hide Camera Box (Press 'C' to restore)">×</button>
+    </div>
+  </div>
+  <div class="pip-body">
+    <img id="camStream" src="/video_feed" alt="Camera Feed">
+    <div class="bracket bracket-tl"></div>
+    <div class="bracket bracket-tr"></div>
+    <div class="bracket bracket-bl"></div>
+    <div class="bracket bracket-br"></div>
+    <div class="pip-hud">
+      <span id="hudCoords">X: +0.00 Y: +0.00</span>
+      <span id="hudState">WATCHING</span>
+    </div>
+    <div id="camFallback" class="cam-fallback">
+      <div class="cam-fallback-icon">📷</div>
+      <div><strong>Camera Offline</strong><br>Run <code>motion_server.py</code> to connect the video feed</div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating Pill button to restore camera preview when hidden -->
+<button id="camRestorePill" class="cam-restore-pill" title="Press 'C' on keyboard to toggle">
+  <span class="pulse-dot" style="width:6px; height:6px;"></span>
+  <span>Show Camera Feed (C)</span>
+</button>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let w, h, dpr;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  w = window.innerWidth;
+  h = window.innerHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Source "code" that fills the eye
+const SNIPPET = (
+  "const eye = new Vision(); while(true){ eye.focus(target); if(eye.tired) continue; " +
+  "function render(frame){ for(let i=0;i<pixels.length;i++){ pixels[i]=sample(i)*light; } } " +
+  "import { watch } from 'mind'; export default async()=>{ await dream(); return signal; } " +
+  "if(user.looks()){ screen.stare(); } else { screen.wait(); } let loop=requestAnimationFrame(draw); " +
+  "<div class='iris'></div> .pupil{border-radius:50%;background:#000;} SELECT * FROM sight WHERE open=1; "
+).split('');
+
+// Pointer tracking
+let targetX = 0, targetY = 0;
+let lookX = 0, lookY = 0;
+let lastMove = 0;
+function point(x, y) {
+  targetX = (x / w - 0.5) * 2;
+  targetY = (y / h - 0.5) * 2;
+  lastMove = performance.now();
+}
+window.addEventListener('mousemove', e => point(e.clientX, e.clientY));
+window.addEventListener('touchmove', e => point(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+window.addEventListener('touchstart', e => point(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+
+// UI Controls for Camera PIP Box
+const pipBox = document.getElementById('pipBox');
+const pipMinBtn = document.getElementById('pipMinBtn');
+const pipCloseBtn = document.getElementById('pipCloseBtn');
+const camRestorePill = document.getElementById('camRestorePill');
+const camStream = document.getElementById('camStream');
+const camFallback = document.getElementById('camFallback');
+const hudCoords = document.getElementById('hudCoords');
+const hudState = document.getElementById('hudState');
+const pulseDot = document.getElementById('pulseDot');
+
+let isMinimized = false;
+let isHidden = false;
+
+pipMinBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isMinimized = !isMinimized;
+  pipBox.classList.toggle('minimized', isMinimized);
+  pipMinBtn.textContent = isMinimized ? '□' : '−';
+});
+
+pipCloseBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isHidden = true;
+  pipBox.classList.add('hidden');
+  camRestorePill.classList.add('visible');
+});
+
+camRestorePill.addEventListener('click', () => {
+  isHidden = false;
+  pipBox.classList.remove('hidden');
+  camRestorePill.classList.remove('visible');
+});
+
+// Gesture Math Controls & State
+const mathPanel = document.getElementById('mathPanel');
+const mathMinBtn = document.getElementById('mathMinBtn');
+const mathCloseBtn = document.getElementById('mathCloseBtn');
+const mathModeBtn = document.getElementById('mathModeBtn');
+const mathRestorePill = document.getElementById('mathRestorePill');
+const mathStatusDot = document.getElementById('mathStatusDot');
+
+const calcView = document.getElementById('calcView');
+const quizView = document.getElementById('quizView');
+
+const leftHandVal = document.getElementById('leftHandVal');
+const leftHandGest = document.getElementById('leftHandGest');
+const rightHandVal = document.getElementById('rightHandVal');
+const rightHandGest = document.getElementById('rightHandGest');
+const mathPrimaryResult = document.getElementById('mathPrimaryResult');
+const opBtns = document.querySelectorAll('.op-btn');
+
+const gridAdd = document.getElementById('gridAdd');
+const gridSub = document.getElementById('gridSub');
+const gridMul = document.getElementById('gridMul');
+const gridDiv = document.getElementById('gridDiv');
+
+const quizQ = document.getElementById('quizQ');
+const quizTargetCount = document.getElementById('quizTargetCount');
+const quizScore = document.getElementById('quizScore');
+const quizStreak = document.getElementById('quizStreak');
+const quizFeedback = document.getElementById('quizFeedback');
+
+let isMathMinimized = false;
+let isMathHidden = false;
+let isQuizMode = false;
+let activeOp = '+';
+
+let currentScore = 0;
+let currentStreak = 0;
+let quizTarget = 5;
+let quizCorrectHold = 0;
+
+mathMinBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isMathMinimized = !isMathMinimized;
+  mathPanel.classList.toggle('minimized', isMathMinimized);
+  mathMinBtn.textContent = isMathMinimized ? '□' : '−';
+});
+
+mathCloseBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isMathHidden = true;
+  mathPanel.classList.add('hidden');
+  mathRestorePill.classList.add('visible');
+});
+
+mathRestorePill.addEventListener('click', () => {
+  isMathHidden = false;
+  mathPanel.classList.remove('hidden');
+  mathRestorePill.classList.remove('visible');
+});
+
+mathModeBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  isQuizMode = !isQuizMode;
+  calcView.style.display = isQuizMode ? 'none' : 'block';
+  quizView.style.display = isQuizMode ? 'block' : 'none';
+  mathModeBtn.textContent = isQuizMode ? '🧮 Calculator' : '🎮 Quiz Mode';
+  if (isQuizMode) generateQuizQuestion();
+});
+
+opBtns.forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    opBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeOp = btn.dataset.op;
+  });
+});
+
+function generateQuizQuestion() {
+  const ops = ['+', '-'];
+  const op = ops[Math.floor(Math.random() * ops.length)];
+  let a, b, ans;
+  if (op === '+') {
+    ans = Math.floor(Math.random() * 5) + 1; // 1 to 5
+    a = Math.floor(Math.random() * ans);
+    b = ans - a;
+  } else {
+    a = Math.floor(Math.random() * 4) + 2; // 2 to 5
+    b = Math.floor(Math.random() * a);
+    ans = a - b;
+  }
+  quizTarget = ans;
+  quizQ.textContent = `${a} ${op} ${b} = ?`;
+  quizTargetCount.textContent = ans;
+  quizFeedback.textContent = `Hold up ${ans} finger${ans !== 1 ? 's' : ''}!`;
+  quizFeedback.style.color = '#ffd000';
+  quizCorrectHold = 0;
+}
+
+// Shortcuts: 'C' toggles camera, 'M' toggles math panel, '+','-','*','/' changes operator
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'c' || e.key === 'C') {
+    if (isHidden) camRestorePill.click();
+    else pipCloseBtn.click();
+  } else if (e.key === 'm' || e.key === 'M') {
+    if (isMathHidden) mathRestorePill.click();
+    else mathCloseBtn.click();
+  } else if (e.key === '+') {
+    document.querySelector('.op-btn[data-op="+"]').click();
+  } else if (e.key === '-') {
+    document.querySelector('.op-btn[data-op="−"]').click();
+  } else if (e.key === '*') {
+    document.querySelector('.op-btn[data-op="×"]').click();
+  } else if (e.key === '/') {
+    document.querySelector('.op-btn[data-op="÷"]').click();
+  }
+});
+
+// Handle image load error / reconnect
+camStream.onerror = () => {
+  camFallback.classList.add('active');
+  setTimeout(() => {
+    camStream.src = '/video_feed?t=' + Date.now();
+  }, 2000);
+};
+
+camStream.onload = () => {
+  camFallback.classList.remove('active');
+};
+
+// Motion data polling from python server
+const camStatus = document.getElementById('camStatus');
+let lastBlinkId = -1;
+let isPolling = false;
+
+async function pollMotion() {
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    const r = await fetch('/motion', { cache: 'no-store' });
+    const m = await r.json();
+    if (lastBlinkId === -1) lastBlinkId = m.blink_id;
+    if (m.motion) {
+      targetX = m.x;
+      targetY = m.y;
+      lastMove = performance.now();   // stop idle wandering
+    }
+    if (m.blink_id !== lastBlinkId) {
+      lastBlinkId = m.blink_id;
+      blinkNow();                     // blink when movement starts
+    }
+    camStatus.textContent = m.motion ? 'Movement detected' : 'Watching for movement…';
+    hudState.textContent = m.motion ? `TRACKING ${m.fps ? '(' + Math.round(m.fps) + ' FPS)' : ''}` : 'WATCHING';
+    hudState.style.color = m.motion ? '#00ffaa' : '#92bfff';
+    pulseDot.style.background = m.motion ? '#00ffaa' : '#4e95ff';
+    pulseDot.style.boxShadow = m.motion ? '0 0 8px #00ffaa' : '0 0 6px #4e95ff';
+    hudCoords.textContent = `X:${(m.x >= 0 ? '+' : '') + m.x.toFixed(2)} Y:${(m.y >= 0 ? '+' : '') + m.y.toFixed(2)}`;
+    camFallback.classList.remove('active');
+
+    // Update Gesture Math Telemetry
+    if (m.hand_detected) {
+      mathStatusDot.style.background = '#00ffaa';
+      mathStatusDot.style.boxShadow = '0 0 8px #00ffaa';
+    } else {
+      mathStatusDot.style.background = '#ffaa00';
+      mathStatusDot.style.boxShadow = '0 0 6px #ffaa00';
+    }
+
+    const leftF = m.left_hand_fingers || 0;
+    const rightF = m.right_hand_fingers || 0;
+    leftHandVal.textContent = leftF;
+    rightHandVal.textContent = rightF;
+    leftHandGest.textContent = m.gesture_left || 'NONE';
+    rightHandGest.textContent = m.gesture_right || 'NONE';
+
+    // Breakdown grid
+    gridAdd.textContent = m.math_add !== undefined ? m.math_add : (leftF + rightF);
+    gridSub.textContent = m.math_sub !== undefined ? m.math_sub : (leftF - rightF);
+    gridMul.textContent = m.math_mul !== undefined ? m.math_mul : (leftF * rightF);
+    gridDiv.textContent = m.math_div !== undefined ? m.math_div.toFixed(1) : (leftF / Math.max(1, rightF)).toFixed(1);
+
+    // Primary result computation
+    let res = 0;
+    if (activeOp === '+') res = leftF + rightF;
+    else if (activeOp === '−' || activeOp === '-') res = leftF - rightF;
+    else if (activeOp === '×' || activeOp === '*') res = leftF * rightF;
+    else if (activeOp === '÷' || activeOp === '/') res = (leftF / Math.max(1, rightF)).toFixed(1);
+    mathPrimaryResult.textContent = res;
+
+    // Quiz Challenge Verification
+    if (isQuizMode) {
+      const shown = (m.left_hand_fingers > 0) ? m.left_hand_fingers : m.right_hand_fingers;
+      if (shown === quizTarget && m.hand_detected) {
+        quizCorrectHold += 1;
+        quizFeedback.textContent = `Holding ${shown}... keep steady!`;
+        quizFeedback.style.color = '#00ffaa';
+        if (quizCorrectHold >= 12) { // ~0.3s steady hold
+          currentScore += 10;
+          currentStreak += 1;
+          quizScore.textContent = currentScore;
+          quizStreak.textContent = `🔥 ${currentStreak}`;
+          quizFeedback.textContent = '🎉 CORRECT! +10 PTS';
+          quizFeedback.style.color = '#00ffaa';
+          blinkNow(); // Eye blinks in celebration
+          setTimeout(generateQuizQuestion, 1200);
+          quizCorrectHold = -999;
+        }
+      } else {
+        if (quizCorrectHold > 0) quizCorrectHold = 0;
+      }
+    }
+  } catch (err) {
+    camStatus.textContent = 'Run motion_server.py to connect the camera';
+    hudState.textContent = 'OFFLINE';
+    hudState.style.color = '#ff6b6b';
+    pulseDot.style.background = '#ff4b4b';
+    pulseDot.style.boxShadow = '0 0 6px #ff4b4b';
+    camFallback.classList.add('active');
+  } finally {
+    isPolling = false;
+  }
+}
+setInterval(pollMotion, 25); // Ultra-responsive 40Hz polling
+
+// Blinking
+let open = 1;
+let nextBlink = 600;
+let blinkStart = -1;
+const BLINK_MS = 350; // Snappier blink
+
+function blinkNow() {
+  if (blinkStart < 0) blinkStart = performance.now();
+}
+window.addEventListener('mousedown', (e) => {
+  if (e.target.closest('#pipBox') || e.target.closest('#camRestorePill') || e.target.closest('#mathPanel') || e.target.closest('#mathRestorePill')) return;
+  blinkNow();
+});
+window.addEventListener('touchstart', (e) => {
+  if (e.target.closest('#pipBox') || e.target.closest('#camRestorePill') || e.target.closest('#mathPanel') || e.target.closest('#mathRestorePill')) return;
+  blinkNow();
+}, { passive: true });
+
+function updateBlink(t) {
+  if (blinkStart < 0 && t > nextBlink) {
+    blinkStart = t;
+  }
+  if (blinkStart >= 0) {
+    const p = (t - blinkStart) / BLINK_MS;
+    if (p >= 1) {
+      open = 1;
+      blinkStart = -1;
+      nextBlink = t + (Math.random() < 0.3 ? 120 : 1000 + Math.random() * 1400);
+    } else {
+      open = Math.abs(Math.cos(p * Math.PI)); // 1 -> 0 -> 1
+    }
+  }
+}
+
+// Helper to draw 4-pointed diamond star sparkle
+function drawStar4(cx, cy, rOut, rIn) {
+  ctx.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2 - Math.PI / 2;
+    const aMid = a + Math.PI / 4;
+    if (i === 0) ctx.moveTo(cx + Math.cos(a) * rOut, cy + Math.sin(a) * rOut);
+    else ctx.lineTo(cx + Math.cos(a) * rOut, cy + Math.sin(a) * rOut);
+    ctx.lineTo(cx + Math.cos(aMid) * rIn, cy + Math.sin(aMid) * rIn);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function eyePath(cx, cy, W, H) {
+  ctx.beginPath();
+  // Anime eye arch: sweeping upper lid, soft curved lower lid
+  ctx.moveTo(cx - W * 0.95, cy + H * 0.08);
+  ctx.bezierCurveTo(cx - W * 0.45, cy - H * 1.88, cx + W * 0.42, cy - H * 1.94, cx + W * 0.98, cy - H * 0.12);
+  ctx.bezierCurveTo(cx + W * 0.55, cy + H * 1.62, cx - W * 0.42, cy + H * 1.58, cx - W * 0.95, cy + H * 0.08);
+  ctx.closePath();
+}
+
+function draw(t) {
+  updateBlink(t);
+
+  // idle wandering when pointer & motion have been still
+  if (t - lastMove > 2000) {
+    targetX = Math.sin(t / 1400) * 0.62;
+    targetY = Math.sin(t / 1900 + 1) * 0.28;
+  }
+
+  // Fast saccadic eye movement
+  const dist = Math.hypot(targetX - lookX, targetY - lookY);
+  const lerpSpeed = Math.min(0.35, 0.18 + dist * 0.25);
+  lookX += (targetX - lookX) * lerpSpeed;
+  lookY += (targetY - lookY) * lerpSpeed;
+
+  // 1. Background: Warm porcelain anime skin tone with diagonal sunlight illumination
+  const skinGrad = ctx.createLinearGradient(w * 0.8, 0, 0, h);
+  skinGrad.addColorStop(0.0, '#fef5f0'); // Bright lit side
+  skinGrad.addColorStop(0.45, '#fae1d6');
+  skinGrad.addColorStop(0.55, '#e4bcb1'); // Soft diagonal cast shadow
+  skinGrad.addColorStop(1.0, '#d5aaa0');
+  ctx.fillStyle = skinGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Ambient dark sapphire hair strands framing the face (top and sides)
+  ctx.fillStyle = '#141b38';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(w * 0.22, 0);
+  ctx.bezierCurveTo(w * 0.16, h * 0.35, w * 0.08, h * 0.65, 0, h * 0.85);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(w, 0);
+  ctx.lineTo(w * 0.78, 0);
+  ctx.bezierCurveTo(w * 0.85, h * 0.3, w * 0.92, h * 0.6, w, h * 0.75);
+  ctx.closePath();
+  ctx.fill();
+
+  // Highlight hair sheen
+  ctx.fillStyle = 'rgba(50, 75, 140, 0.4)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(w * 0.12, h * 0.2, w * 0.06, h * 0.45, 0, h * 0.55);
+  ctx.closePath();
+  ctx.fill();
+
+  const cx = w / 2;
+  const cy = h * 0.52;
+  const W = Math.min(w * 0.46, h * 0.40);
+  const Hmax = W * 0.48;
+  const H = Math.max(Hmax * open, 0.5);
+  const R = W * 0.42; // Expressive large anime iris
+
+
+  // Upper eyelid double crease
+  ctx.strokeStyle = 'rgba(185, 140, 135, 0.85)';
+  ctx.lineWidth = Math.max(1.8, W * 0.01);
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.82, cy - H * 2.15);
+  ctx.bezierCurveTo(cx - W * 0.25, cy - H * 2.45, cx + W * 0.35, cy - H * 2.42, cx + W * 0.85, cy - H * 1.55);
+  ctx.stroke();
+
+  // Eyebrow curve
+  ctx.strokeStyle = '#182040';
+  ctx.lineWidth = Math.max(2.5, W * 0.016);
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.9, cy - H * 2.75);
+  ctx.bezierCurveTo(cx - W * 0.2, cy - H * 3.1, cx + W * 0.4, cy - H * 3.05, cx + W * 0.95, cy - H * 2.3);
+  ctx.stroke();
+
+  ctx.save();
+  eyePath(cx, cy, W, H);
+  ctx.clip();
+
+  // 2. Sclera: Anime periwinkle-lavender shadow on top, clean soft white below
+  const scleraGrad = ctx.createLinearGradient(0, cy - Hmax * 1.2, 0, cy + Hmax * 1.2);
+  scleraGrad.addColorStop(0.0, '#bdcfee'); // Eyelid shadow
+  scleraGrad.addColorStop(0.35, '#dbe5f8');
+  scleraGrad.addColorStop(0.68, '#f5f7fe'); // Clean celestial white
+  scleraGrad.addColorStop(1.0, '#ebf1fc');
+  ctx.fillStyle = scleraGrad;
+  ctx.fillRect(cx - W * 1.2, cy - Hmax * 1.4, W * 2.4, Hmax * 2.8);
+
+  // Tear-duct blush in the corners
+  const pinkGlow = ctx.createRadialGradient(cx - W * 0.88, cy + Hmax * 0.05, 0, cx - W * 0.88, cy, W * 0.38);
+  pinkGlow.addColorStop(0, 'rgba(255, 175, 185, 0.45)');
+  pinkGlow.addColorStop(1, 'rgba(255, 175, 185, 0)');
+  ctx.fillStyle = pinkGlow;
+  ctx.fillRect(cx - W * 1.2, cy - Hmax * 1.3, W * 0.8, Hmax * 2.6);
+
+  // 3. Sclera: Rows of translucent celestial code
+  const fs = Math.max(7, W * 0.038);
+  ctx.font = `${fs}px "Courier New", monospace`;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(70, 95, 155, 0.28)';
+  const rowH = fs * 1.15;
+  const scroll = (t / 40) % 400;
+  const rows = Math.ceil((Hmax * 2) / rowH) + 3;
+  for (let r = 0; r < rows; r++) {
+    const y = cy - Hmax - rowH + r * rowH;
+    const off = (r * 37 + scroll * (r % 2 ? 1 : -1)) | 0;
+    let line = '';
+    const n = Math.ceil((W * 2) / (fs * 0.6)) + 4;
+    for (let i = 0; i < n; i++) {
+      line += SNIPPET[(((i + off) % SNIPPET.length) + SNIPPET.length) % SNIPPET.length];
+    }
+    ctx.fillText(line, cx - W - 10, y);
+  }
+
+  // 4. Iris Position
+  const ix = cx + lookX * (W - R * 1.15) * 0.6;
+  const iy = cy + lookY * Hmax * 0.38;
+
+  // 5. Iris Base: The Exact Sapphire -> Azure -> Cyan Gradient from the artwork
+  const irisGrad = ctx.createLinearGradient(ix, iy - R, ix, iy + R);
+  irisGrad.addColorStop(0.0, '#060c28'); // Deepest midnight navy
+  irisGrad.addColorStop(0.24, '#0e246e'); // Deep sapphire
+  irisGrad.addColorStop(0.48, '#164ec8'); // Royal sapphire blue
+  irisGrad.addColorStop(0.68, '#247df5'); // Electric azure
+  irisGrad.addColorStop(0.84, '#42b8ff'); // Radiant sky blue
+  irisGrad.addColorStop(0.94, '#64eaff'); // Brilliant neon cyan
+  irisGrad.addColorStop(1.0, '#b6f6ff'); // Luminous aqua-white edge
+  ctx.fillStyle = irisGrad;
+  ctx.beginPath();
+  ctx.arc(ix, iy, R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Luminous lower nebula glow pool (cloud-like brightness inside the eye)
+  const nebula = ctx.createRadialGradient(ix, iy + R * 0.52, 0, ix, iy + R * 0.52, R * 0.68);
+  nebula.addColorStop(0.0, 'rgba(160, 248, 255, 0.85)');
+  nebula.addColorStop(0.45, 'rgba(75, 215, 255, 0.45)');
+  nebula.addColorStop(1.0, 'rgba(25, 125, 255, 0)');
+  ctx.fillStyle = nebula;
+  ctx.beginPath();
+  ctx.arc(ix, iy + R * 0.52, R * 0.68, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 6. Iris: Rings of code characters with vertically-mapped colors
+  const rings = 11;
+  const cf = Math.max(6, R * 0.095);
+  ctx.font = `600 ${cf}px "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let k = 0; k < rings; k++) {
+    const f = k / (rings - 1);
+    const r = R * (0.34 + f * 0.63);
+    const count = Math.max(8, Math.floor((Math.PI * 2 * r) / (cf * 0.62)));
+    const dir = k % 2 ? 1 : -1;
+    const spin = (t / 1800) * dir * (1.1 - f * 0.6);
+
+    for (let i = 0; i < count; i++) {
+      const a = spin + (i / count) * Math.PI * 2;
+      const px = ix + Math.cos(a) * r;
+      const py = iy + Math.sin(a) * r;
+      const normY = Math.max(0, Math.min(1, (py - (iy - R)) / (2 * R)));
+
+      // Color dynamically matches exact artwork vertical spectrum
+      if (normY < 0.35) {
+        ctx.fillStyle = `rgba(32, 70, 185, ${0.75 + f * 0.25})`; // Deep sapphire
+      } else if (normY < 0.68) {
+        ctx.fillStyle = `rgba(55, 145, 255, ${0.85 + f * 0.15})`; // Electric blue
+      } else {
+        ctx.fillStyle = `rgba(160, 250, 255, ${0.95 + Math.sin(t / 400 + i) * 0.05})`; // Radiant glowing cyan
+      }
+
+      const ch = SNIPPET[(i * 3 + k * 11) % SNIPPET.length];
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(a + Math.PI / 2);
+      ctx.fillText(ch, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // 7. Pupil: Deep ink navy-black
+  const pr = R * 0.36 * (1 + Math.sin(t / 900) * 0.03);
+  const pupilGrad = ctx.createRadialGradient(ix, iy - pr * 0.1, pr * 0.15, ix, iy, pr * 1.15);
+  pupilGrad.addColorStop(0.0, '#05081b');
+  pupilGrad.addColorStop(0.85, '#070f28');
+  pupilGrad.addColorStop(1.0, 'rgba(7, 15, 40, 0)');
+  ctx.fillStyle = pupilGrad;
+  ctx.beginPath();
+  ctx.arc(ix, iy, pr * 1.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 8. The 4-Point Diamond Sparkle Star (inside the pupil - exact match to artwork)
+  const starX = ix + pr * 0.12;
+  const starY = iy - pr * 0.08;
+  const starR = pr * 0.52;
+
+  // Outer cyan diamond glow
+  ctx.save();
+  ctx.shadowColor = '#42d8ff';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = 'rgba(70, 225, 255, 0.88)';
+  drawStar4(starX, starY, starR, starR * 0.28);
+
+  // Inner pure crystalline white star
+  ctx.fillStyle = '#ffffff';
+  drawStar4(starX, starY, starR * 0.72, starR * 0.2);
+  ctx.restore();
+
+  // 9. Glints & Reflections
+  // Primary elongated curved white sky pill reflection (upper-left)
+  ctx.save();
+  ctx.translate(ix - pr * 0.82, iy - pr * 0.88);
+  ctx.rotate(-0.35);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, pr * 0.38, pr * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Secondary lower glint dots in cyan pool
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.beginPath();
+  ctx.arc(ix - R * 0.42, iy + R * 0.56, pr * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(180, 248, 255, 0.85)';
+  ctx.beginPath();
+  ctx.arc(ix + R * 0.45, iy + R * 0.48, pr * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore(); // End clipping
+
+  // 10. Bold Anime Eyelashes & Eyeliner
+  // Upper thick winged lash line
+  ctx.strokeStyle = '#0e1022';
+  ctx.lineWidth = Math.max(3.8, W * 0.026);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.95, cy + H * 0.08);
+  ctx.bezierCurveTo(cx - W * 0.45, cy - H * 1.88, cx + W * 0.42, cy - H * 1.94, cx + W * 1.05, cy - H * 0.22);
+  ctx.stroke();
+
+  // Outer winged lash flare
+  ctx.fillStyle = '#0e1022';
+  ctx.beginPath();
+  ctx.moveTo(cx + W * 0.92, cy - H * 0.5);
+  ctx.lineTo(cx + W * 1.14, cy - H * 0.58);
+  ctx.lineTo(cx + W * 0.98, cy - H * 0.02);
+  ctx.closePath();
+  ctx.fill();
+
+  // Lower delicate lash line
+  ctx.strokeStyle = '#181c34';
+  ctx.lineWidth = Math.max(1.8, W * 0.012);
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.92, cy + H * 0.1);
+  ctx.bezierCurveTo(cx - W * 0.4, cy + H * 1.58, cx + W * 0.55, cy + H * 1.62, cx + W * 0.96, cy - H * 0.1);
+  ctx.stroke();
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
